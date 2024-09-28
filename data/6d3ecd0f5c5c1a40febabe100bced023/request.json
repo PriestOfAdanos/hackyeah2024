@@ -1,0 +1,64 @@
+{
+    "request": {
+        "headers": {
+            "accept": "image/tiff",
+            "content-type": "application/json"
+        },
+        "payload": {
+            "evalscript": "\n//VERSION=3\nfunction setup() {\n   return {\n    input: [\"NO2\"], // This specifies the bands that are looked at\n    output: { \n      bands: 1,\n      // This specifies in which data type the values will be returned\n      sampleType: \"FLOAT32\"\n    },\n    // Will make a simple mosaic, taking the most recent tiles to fill the bounding box\n    mosaicking: \"SIMPLE\"\n  };\n}\n\nfunction evaluatePixel(samples) {\n    // Here we could do more calculations which are applied to each pixel, \n    // but for now let's just return the value \n   return [samples.NO2] \n}\n",
+            "input": {
+                "bounds": {
+                    "bbox": [
+                        -1369229.7367572652,
+                        4108302.4328331794,
+                        3620109.840597257,
+                        9137126.101929847
+                    ],
+                    "properties": {
+                        "crs": "http://www.opengis.net/def/crs/EPSG/0/3857"
+                    }
+                },
+                "data": [
+                    {
+                        "dataFilter": {
+                            "timeRange": {
+                                "from": "2023-01-01T00:00:00Z",
+                                "to": "2023-05-26T23:59:59Z"
+                            }
+                        },
+                        "type": "sentinel-5p-l2"
+                    }
+                ]
+            },
+            "output": {
+                "responses": [
+                    {
+                        "format": {
+                            "type": "image/tiff"
+                        },
+                        "identifier": "default"
+                    }
+                ],
+                "resx": 5500,
+                "resy": 3500
+            }
+        },
+        "timestamp": "2024-09-28T19:22:22.653307",
+        "url": "https://sh.dataspace.copernicus.eu/api/v1/process"
+    },
+    "response": {
+        "elapsed": 2.093899,
+        "headers": {
+            "access-control-allow-credentials": "true",
+            "access-control-allow-headers": "origin,content-type,accept,accept-crs,authorization,cache-control",
+            "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+            "access-control-allow-origin": "*",
+            "access-control-max-age": "3600",
+            "content-type": "image/tiff",
+            "date": "Sat, 28 Sep 2024 17:22:20 GMT",
+            "transfer-encoding": "chunked",
+            "x-processingunits-spent": "3.3146134410683317"
+        },
+        "status_code": 200
+    }
+}
