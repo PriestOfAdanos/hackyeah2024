@@ -1,30 +1,125 @@
-import requests
-import json
-import pandas as pd
-from bs4 import BeautifulSoup
-import folium  # To visualize on a map
-import matplotlib.pyplot as plt
-import geodesk
-import geopandas as gpd
-import pandas as pd
-import googlemaps
 import osmnx as ox
-import networkx as nx
-from pathlib import Path
-import getpass
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
-import geopandas as gpd
-import rasterio
-import rasterio.plot
 from rasterio import features
 from math import sqrt
 
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 from numba import njit
+import requests
+import math
+
+from geopy.geocoders import Nominatim
+
+geolocator = Nominatim(user_agent="kkkkkk")
+
+
+
+import csv
+import time
+from geopy.geocoders import Nominatim
+
+def geocode_csv_addresses(csv_filename):
+    """
+    Reads a CSV file line by line, selects the first element of each line,
+    uses Nominatim to get its longitude and latitude, and writes the results
+    to an output CSV file.
+
+    :param csv_filename: str, path to the input CSV file.
+    :param output_filename: str, path to the output CSV file where results will be saved.
+    """
+    # Initialize the Nominatim geocoder with a user agent
+    geolocator = Nominatim(user_agent="my_geocoder")
+    output_dict = {}
+    # Open the input and output CSV files
+    with open(csv_filename, 'r', newline='', encoding='utf-8') as csvfile_in:
+        reader = csv.reader(csvfile_in)
+
+        # Process each row in the input CSV file
+        for row in reader:
+            address = row[0]  # Select the first element of the line
+            try:
+                # Use Nominatim to geocode the address
+                location = geolocator.geocode(f"Krakow, {address}")
+                if location:
+                    latitude = location.latitude
+                    longitude = location.longitude
+                    output_dict[(latitude, longitude)] = row[1]
+            except Exception as e:
+                print(f"Error geocoding {address}: {e}")
+
+            # Append the latitude and longitude to the row
+
+            # Sleep to respect Nominatim's usage policy
+            time.sleep(1)
+    return output_dict
+
+
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the Haversine distance between two points on the Earth.
+    
+    Parameters:
+        lat1, lon1: Latitude and longitude of point 1 in decimal degrees
+        lat2, lon2: Latitude and longitude of point 2 in decimal degrees
+    
+    Returns:
+        Distance in kilometers between point 1 and point 2
+    """
+    
+    R = 6371.0  # Radius of the Earth in kilometers
+    
+    # Convert decimal degrees to radians
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    
+    # Haversine formula
+    a = math.sin(delta_phi / 2.0) ** 2 + \
+        math.cos(phi1) * math.cos(phi2) * \
+        math.sin(delta_lambda / 2.0) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    
+    distance = R * c
+    return distance
+
+def find_nearest_value(target, points_dict):
+    """
+    Find the value in 'points_dict' whose key (latitude, longitude) is nearest to the 'target' point.
+    
+    Parameters:
+        target: Tuple of (latitude, longitude) for the target point
+        points_dict: Dictionary with keys as (latitude, longitude) tuples and values as associated data
+    
+    Returns:
+        The value corresponding to the nearest key, or None if the dictionary is empty
+    """
+    if not points_dict:
+        return None  # Return None if the dictionary is empty
+    
+    min_distance = 100
+    nearest_value = 0
+    target_lat, target_lon = target
+    
+    for idx, (point, value) in enumerate(points_dict.items()):
+        point_lat, point_lon = point
+        distance = haversine_distance(target_lat, target_lon, point_lat, point_lon)
+        # Debug: Print each distance calculated
+        # print(f"Distance to key {idx} ({point_lat}, {point_lon}): {distance:.2f} km")
+        
+        if distance < min_distance:
+            # min_distance = distance
+            nearest_value = int(value) * ((min_distance - distance)/min_distance)
+    
+    return nearest_value
+
+
+geocode_dict = geocode_csv_addresses('worst_edges.csv')
 
 # Load the pixels_dict from the pickle file
 pickle_file = "pixels_dict.pkl"
@@ -47,7 +142,6 @@ def get_value_from_point(lat, lon):
 # Build the road network graph using OSMnx
 place_name = "Krakow, Poland"
 G = ox.graph_from_place(place_name, network_type='bike')
-H = ox.graph_from_place(place_name, network_type='bike')
 # Extract node data into arrays
 node_ids = []
 latitudes = []
@@ -97,7 +191,7 @@ def adjust_edge_lengths(edge_u_idx, edge_v_idx, edge_lengths, node_no2_values):
         v_idx = edge_v_idx[i]
         # Average NO2 value from both nodes
         no2_value = (node_no2_values[u_idx] + node_no2_values[v_idx]) / 2.0
-        edge_lengths_adjusted[i] = edge_lengths[i] * (1 + no2_value)
+        edge_lengths_adjusted[i] = edge_lengths[i] * (1 + (no2_value*10))
     return edge_lengths_adjusted
 
 # Adjust the edge lengths
@@ -109,202 +203,34 @@ for i in range(len(edge_u)):
     v = edge_v[i]
     G[u][v][0]['length'] = edge_lengths_adjusted[i]  # Use [0] if G is a MultiDiGraph
 
+# Specify the filename to save the graph
+graph_filename = "graph_G.pkl"
 
-# Compute the sum of lengths of all edges in graph G
-total_length_G = sum(data['length'] for _, _, data in G.edges(data=True) if 'length' in data)
+sum=0
+for u, v, key, data in G.edges(data=True, keys=True):
+    # Get the coordinates of the start node
+    u_lat = G.nodes[u]['y']
+    u_lon = G.nodes[u]['x']
 
-# Compute the sum of lengths of all edges in graph H
-total_length_H = sum(data['length'] for _, _, data in H.edges(data=True) if 'length' in data)
+    # Get the coordinates of the end node
+    v_lat = G.nodes[v]['y']
+    v_lon = G.nodes[v]['x']
 
-# Subtract the total lengths
-length_difference = total_length_G - total_length_H
+    # You can use either the start or end point, or an average coordinate
+    lat = (u_lat + v_lat) / 2
+    lon = (u_lon + v_lon) / 2
 
-# Print the results
-print(f"Total length of all edges in G: {total_length_G}")
-print(f"Total length of all edges in H: {total_length_H}")
-print(f"Difference in total lengths (G - H): {length_difference}")
+    # Find the nearest value using the coordinates
+    nearest_value = find_nearest_value((lat, lon), geocode_dict)
 
+    # Update the length attribute with the value from find_nearest_value
+    if 'length' in data:
+        sum+= nearest_value
+        data['length'] *= (1+nearest_value)
+    else:
+        data['length'] = nearest_value
+print(sum)
 
-# import requests
-# import json
-# import pandas as pd
-# from bs4 import BeautifulSoup
-# import folium  # To visualize on a map
-# import matplotlib.pyplot as plt
-# import geodesk
-# import geopandas as gpd
-# import pandas as pd
-# import googlemaps
-# import osmnx as ox
-# import networkx as nx
-# from pathlib import Path
-# import getpass
-# import pickle
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# import numpy as np
-# import pandas as pd
-# import geopandas as gpd
-# import rasterio
-# import rasterio.plot
-# from rasterio import features
-# from math import sqrt
-
-# from pyproj import Transformer
- 
-
-# # Specify the file name where the dictionary was saved
-# pickle_file = "pixels_dict.pkl"
-
-# # Open the file in read-binary mode and load the dictionary
-# with open(pickle_file, 'rb') as file:
-#     pixels_dict = pickle.load(file)
-
-# def get_value_from_point(lat, lon):
-#     # If the exact point exists, return it
-#     if (lat, lon) in pixels_dict:
-#         return pixels_dict[(lat, lon)]
-    
-#     # Calculate the nearest neighbor in the dictionary
-#     nearest_point = None
-#     min_distance = float('inf')
-
-#     for point in pixels_dict:
-#         point_lat, point_lon = point
-#         distance = sqrt((lat - point_lat)**2 + (lon - point_lon)**2)
-        
-#         if distance < min_distance:
-#             min_distance = distance
-#             nearest_point = point
-
-#     # Return the value from the nearest point
-#     return pixels_dict[nearest_point]
-
-# place_name = "Krakow, Poland"
-# # If using place name
-# G = ox.graph_from_place(place_name, network_type='drive')
-
-# # If using coordinates
-# # G = ox.graph_from_bbox(north, south, east, west, network_type='drive')
-# # Simple plot
-# # ox.plot_graph(G)
-
-# # For an interactive plot (requires folium)
-# # m = ox.plot_graph_folium(G, popup_attribute='name', weight=2, color='blue')
-# # m.save('map.html')
-# # Get basic stats
-# stats = ox.basic_stats(G)
-# print(stats)
-
-# # Find the shortest path between two nodes
-# orig_node = list(G.nodes())[0]
-# dest_node = list(G.nodes())[-1]
-# route = nx.shortest_path(G, orig_node, dest_node, weight='length')
-
-# # Plot the route
-# # fig, ax = ox.plot_graph_route(G, route)
-# # Save the graph as a GraphML file
-# # ox.save_graphml(G, filepath='road_network.graphml')
-
-# # Load the graph from the GraphML file
-# # G = ox.load_graphml('road_network.graphml')
-
-# node_no2_values = {}
-# count = 0 
-# for node, data in G.nodes(data=True):
-#     # Extract the latitude and longitude from the node attributes
-#     lat = data['y']
-#     lon = data['x']
-
-#     edges = G.edges(node, data=True)
-
-#     # Get the NO2 value for this point
-#     no2_value = get_value_from_point(lat, lon)
-#     for u, v, data in edges:
-#         data['length'] *= (1+no2_value)
-
-# print(count)
-
-
-
-
-
-###############
-
-
-# # Helper function to get data from a URL
-# def get_html(url):
-#     try:
-#         response = requests.get(url)
-#         response.raise_for_status()
-#         return response.text
-#     except requests.RequestException as e:
-#         print(f"Failed to retrieve data from {url}: {e}")
-#         return None
-
-# # Example: Getting data from Google Maps Traffic
-# def get_google_maps_traffic(api_key, location):
-#     try:
-#         endpoint = f"https://maps.googleapis.com/maps/api/directions/json"
-#         params = {
-#             'origin': location['origin'],
-#             'destination': location['destination'],
-#             'key': api_key,
-#             'departure_time': 'now',  # To get real-time traffic
-#         }
-#         response = requests.get(endpoint, params=params)
-#         if response.status_code == 200:
-#             data = response.json()
-#             print("Google Maps traffic data successfully retrieved.")
-#             return data
-#         else:
-#             print(f"Error: {response.status_code} when trying to retrieve Google Maps data.")
-#     except requests.RequestException as e:
-#         print(f"Failed to retrieve Google Maps Traffic data: {e}")
-#         return None
-
-# # Example: Scraping Accident Data
-# def get_accident_data():
-#     url = "https://obserwatoriumbrd.pl/mapa-wypadkow/"
-#     html_content = get_html(url)
-#     if html_content:
-#         soup = BeautifulSoup(html_content, 'html.parser')
-#         # Again, need to find out the structure of the data
-#         print("Successfully fetched Accident data.")
-
-
-
-# # Example: Data Integration and Processing
-# def integrate_data():
-#     # Placeholder to demonstrate how data might be processed
-#     traffic_data = get_google_maps_traffic(api_key='AIzaSyB6HhxmD-kuyqcEJNifwNn9txouTnYWvPQ', location={'origin': 'Krakow', 'destination': 'Zakopane'})
-#     accident_data = get_accident_data()
-#     # More integration logic and combining datasets
-#     print("Data integrated successfully.")
-
-# # Visualization Example
-# def visualize_data():
-#     # Example using folium to visualize traffic incidents on a map
-#     m = folium.Map(location=[50.0647, 19.9450], zoom_start=10)
-#     # Add markers, polylines, etc. to represent traffic or accident data.
-#     folium.Marker([50.0647, 19.9450], popup="Sample Traffic Incident").add_to(m)
-#     m.save("traffic_map.html")
-#     print("Map visualization saved as traffic_map.html")
-
-# # Main function to call all other functions
-# def main():
-#     print("Fetching ViaMichelin Traffic Data:")
-    
-#     print("\nFetching Accident Data:")
-#     print(get_accident_data())
-    
-#     print("\nFetching Strava Heatmap Data:")
-    
-#     print("\nIntegrating All Retrieved Data:")
-#     print(integrate_data())
-    
-#     print("\nVisualizing Data on Map:")
-#     print(visualize_data())
-
-# if __name__ == "__main__":
-#     main()
+# Open the file in write-binary mode and pickle the graph
+with open(graph_filename, 'wb') as file:
+    pickle.dump(G, file)
